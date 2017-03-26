@@ -51,7 +51,7 @@ int main()
 		}
 		outword = w[0] | (w[1] << 4) | (w[2] << 8) | (w[3] << 12);
 #ifdef PUNCTURE
-		outword ^= 1 << ((11*i) & 15);
+		outword ^= 1 << ((5*i) & 15);
 #endif
 		interleaved[i] = outword;
 	}
@@ -70,7 +70,7 @@ int main()
 	}
 
 	// First pass, with 12 bits of random
-	uint16_t best, best2, least, test, errcount;
+	uint32_t best, best2, least, test, errcount;
 	lfsr = errcount = 0;
 	for (i = 0; i < 256; i++) {
 		least = 8;
@@ -104,10 +104,45 @@ int main()
 		scrambled[i] = best & 0xff;
 		conflicts[i] = best2 & 0xff;
 	}
-	printf("\nError count:%d\n", errcount);
-
-	// TODO: resolve single bit error conflicts
-
+	printf("Error count:%d\n", errcount);
+#if 1
+	// Resolve single bit error conflicts
+	uint32_t result;
+	for (i = 0; i < 256; i++) {
+		uint32_t k, m, g1, g2, outdword;
+		best = 16;
+		for (j = 0; j < 4; j++) {
+			lfsr = 0;
+			m =  (i == 0) ? 0 : scrambled[i-1];
+			m |= ((j & 0b01) ? conflicts[i] : scrambled[i]) << 8;
+			m |= ((j & 0b10) ? conflicts[i+1] : scrambled[i+1]) << 16;
+			outdword = 0;
+			m >>= 4;
+			for (k = 0; k < 4; k++ ) {
+				lfsr <<= 1;
+				lfsr |= m & 0b1;
+				m >>= 1;
+			}
+			for (k = 0; k < 12; k++) {
+				lfsr <<= 1;
+				lfsr |= (m >> k) & 0b1;
+				g1 = 0b1 & ( lfsr ^ (lfsr >> 3) ^ (lfsr >> 4) );
+				g2 = 0b1 & ( lfsr ^ (lfsr >> 1) ^ (lfsr >> 2)  ^ (lfsr >> 4) );
+				outdword |= g1 << (k + k);
+				outdword |= g2 << (k + k + 1);
+			}
+			test = outdword ^ (interleaved[i] | (interleaved[i + 1] << 16));
+			for (k = 0; test; k++ )
+				test &= test - 1;
+			if (k < best) {
+				best = k;
+				result = j;
+			}
+		}
+		if (result & 0b01)
+			scrambled[i] = conflicts[i];
+	}
+#endif
 	// reverse scrambler
 	lfsr = 0;
 	for (i = 0; i < 256; i++) {
@@ -119,29 +154,6 @@ int main()
 			lsb &= 0b1;
 			lfsr <<= 1;
 			lfsr |= (scrambled[i] >> j) & 0b1;
-
-			outbyte |= lsb << j;
-		}
-		scrambled[i] = outbyte;
-	}
-	for (i = 0; instring[i] > 0; i++) {
-		if (scrambled[i] < 32 || scrambled[i] > 126)
-			scrambled[i] = '.'; // ASCII sanity check
-	}
-	scrambled[i] = 0;
-	printf("%s\n", scrambled);
-
-	// reverse scrambler
-	lfsr = 0;
-	for (i = 0; i < 256; i++) {
-		outbyte = 0;
-		for (j = 0; j < 8; j++ ) {
-			lsb = (conflicts[i] >> j);
-			lsb ^= (lfsr >> 12);
-			lsb ^= (lfsr >> 17);
-			lsb &= 0b1;
-			lfsr <<= 1;
-			lfsr |= (conflicts[i] >> j) & 0b1;
 
 			outbyte |= lsb << j;
 		}
